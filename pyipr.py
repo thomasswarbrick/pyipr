@@ -1,75 +1,136 @@
 import numpy as np
 import math
+import bo_pvt_funcs as bo
 
-class IPR:
-    
-    def __init__(self):
-        self.res_p = 0.0
+class IPR():
+    def test():
+        print("test")
+
+    def set_params(self, res_p: float, res_t: float, pvt: bo.PVTModel):
+        '''
+        Initialises instance of ipr
+        
+        res_p = reservoir pressure, psig
+        pi = productivity index, stb/d/psi
+        test_bhp = test bottom hole pressure, psig
+        test_ql = test liquid rate, stb/d
+        pbub = bubble point pressure, psig
+        type = 'PI' or 'Test', PI can be set manually or calculated from test parameters 
+        '''
+        self.res_p = res_p
+        self.res_t = res_t
+        self.pvtModel = pvt
         self.pi = 0.0
         self.test_bhp = 0.0
         self.test_ql = 0.0
         self.pbub = 0.0
         self.type = 'PI'
-        self.rsi = 0.0
-        self.oilapi = 0.0
-        self.gassg = 0.0
-        self.temp = 0.0
+    
+    def calc_PI (self, res_p, bhp, ql):
+        '''
+        function to calculate the PI from reservoir pressure, bottomhole pressure and rate
 
-    def calc_pbub(self):
-        if self.oilapi <= 30.0:
-            C1 = 0.0362
-            C2 = 1.0937
-            C3 = 25.724
+        res_p = reservoir pressure, psig
+        bhp = bottomhole pressure, psig
+        ql = liquid rate, stb/d
+
+        pi = productivity index, stb/d/psi
+        '''
+        assert res_p > 0.0, 'IPR Invalid: Reservoir Pressure of %0.2f psig is low' % res_p
+        assert self.pbub > 0.0, 'IPR Invald: Bubble Point Pressure of %0.2f psig is low' % self.pbub
+        assert ql > 0, 'Test Data Invalid: Liquid Rate of %0.2f is low' % ql
+        assert bhp > 0, 'Test Data Invalid: BHP of %0.2f psig is low' % bhp
+        assert bhp < res_p, 'Test Data Invalid: BHP of %0.2f psig is greater than Res Pressure of %0.2f psig' % (bhp, res_p)
+
+        #ensure bubble point pressure is at most reservoir pressure
+        if self.pbub > res_p: 
+            self.pbub = res_p
+            print('Warning: Bubble Point Pressure set to Reservoir Pressure of %0.2f psig' % self.res_p)
+
+        if bhp >= self.pbub:
+            pi = ql / (res_p - bhp)
         else:
-            C1 = 0.0178
-            C2 = 1.187
-            C3 = 23.931
-        
-        self.pbub = (self.rsi/(C1*self.gassg*math.exp(C3*(self.oilapi/(self.temp + 460)))))**(1/C2)
+            vogel_drawdown = (res_p - self.pbub + (self.pbub/1.8)*(1-0.2*(bhp/self.pbub)-0.8*np.power(bhp/self.pbub, 2)))
+            pi = ql / vogel_drawdown
+        return pi
 
+    def calc_res_p(self, pi, bhp, ql):
+        '''
+        function to calculate the reservoir pressure from PI, bottomhole pressure and rate
+
+        pi = productivity index, stb/d/psi
+        bhp = bottomhole pressure, psig
+        ql = liquid rate, stb/d
+
+        res_p = reservoir pressure, psig 
+        '''
+        assert self.pbub > 0.0, 'IPR Invald: Bubble Point Pressure of %0.2f psig is low' % self.pbub
+        assert ql > 0, 'Test Data Invalid: Liquid Rate of %0.2f stb/d is low' % ql
+        assert bhp > 0, 'Test Data Invalid: BHP of %0.2f psig is low' % bhp
+        assert pi > 0, 'IPR Invalid: PI of %0.2f stb/d/psi is low' % pi
+
+        if bhp > self.pbub:
+            res_p = ql/pi + bhp
+        else:
+            res_p = ql/pi + self.pbub - (self.pbub/1.8)*(1-0.2*(bhp/self.pbub)-0.8*np.power(bhp/self.pbub, 2))
+        return res_p
+    
     def get_ipr(self):
-        assert self.res_p > 0.0, 'IPR Invalid: Reservoir Pressure of %0.2f is low' % self.res_p
-        assert self.pbub > 0.0, 'IPR Invald: Bubble Point Pressure of %0.2f is low' % self.pbub
+        '''
+        function to return dictionary of Pwf and Rate
+        calculated based on what parameters are currently present for
+        instance of ipr.
+
+        IPR returned is composite:
+        - using PI above bubble point, as flow will be single phase, i.e. Darcy IPR
+        - using vogel below the bubble point, presence of gas reduces productivity due to relative
+            permeability effects
+        '''
+        assert self.res_p > 0.0, 'IPR Invalid: Reservoir Pressure of %0.2f psig is low' % self.res_p
+        assert self.pbub > 0.0, 'IPR Invald: Bubble Point Pressure of %0.2f psig is low' % self.pbub
         assert self.type == 'PI' or self.type == 'Test'
 
-        if self.pbub > self.res_p: #ensure bubble point pressure is at most reservoir pressure
+        #ensure bubble point pressure is at most reservoir pressure
+        if self.pbub > self.res_p: 
             self.pbub = self.res_p
-            print('Warning: Bubble Point Pressure set to Reservoir Pressure of %0.2f' % self.res_p)
-        
+            print('Warning: Bubble Point Pressure set to Reservoir Pressure of %0.2f psig' % self.res_p)
+
+        #ensure that PI is available, if type is test then calculate from well test information        
         if self.type == 'Test':
             assert self.test_ql > 0, 'Test Data Invalid: Liquid Rate of %0.2f is low' % self.test_ql
             assert self.test_bhp > 0, 'Test Data Invalid: BHP of %0.2f is low' % self.test_bhp
-            assert self.test_bhp < self.res_p, 'Test Data Invalid: BHP of %0.2f is greater than Res Pressure of %0.2f' % (self.test_bhp, self.res_p)
-            self.pi = self.test_ql / (self.res_p - self.test_bhp)
-
+            assert self.test_bhp < self.res_p, 'Test Data Invalid: BHP of %0.2f psig is greater than Res Pressure of %0.2f psig' % (self.test_bhp, self.res_p)
+            if self.test_bhp >= self.pbub:
+                self.pi = self.test_ql / (self.res_p - self.test_bhp)
+            else:
+                vogel_drawdown = (self.res_p - self.pbub + (self.pbub/1.8)*(1-0.2*(self.test_bhp/self.pbub)-0.8*np.power(self.test_bhp/self.pbub, 2)))
+                self.pi = self.test_ql / vogel_drawdown
+        #check PI is above 0
         assert self.pi > 0.0, 'IPR Invalid: PI of %0.2f is low' % self.pi
-        
-        ql_bub = self.pi*(self.res_p - self.pbub) #calcualte liquid flow rate at bubble point
-        ql_max = ql_bub + self.pi*self.pbub/1.8 #calculate maximum liquid rate
-        
+        #calcualte liquid flow rate at bubble point
+        if self.pbub < self.res_p:
+            ql_bub = self.pi*(self.res_p - self.pbub) 
+        else:
+            ql_bub = 0.0
+        #calculate maximum liquid rate, aofp
+        ql_max = ql_bub + self.pi*self.pbub/1.8 
+        #create array of pressures, current length of array fixed at 19, includes Pbub
         pwf = (np.linspace(0.001, self.res_p, num = 19)).tolist() #create pwf array
         pwf.append(self.pbub) #add bubble point to pwf array
         pwf = sorted(pwf) #sort pwf 
 
         ql_darcy = [(self.res_p - i) * self.pi for i in pwf if i >= self.pbub] #calculate darcy IPR
-        ql_vogel = [(ql_bub + (ql_max - ql_bub)*(1-0.2*(i/self.pbub)-0.8*(i/self.pbub)**2)) for i in pwf if i < self.pbub] #calculate vogel IPR
+        ql_vogel = [(ql_bub + (ql_max - ql_bub)*(1-0.2*(i/self.pbub)-0.8*np.power(i/self.pbub,2))) for i in pwf if i < self.pbub] #calculate vogel IPR
         ql = ql_vogel + ql_darcy #combine IPRs into one
 
         ipr_arr = {'Pwf': pwf,
             'LiqRate': ql}
         return(ipr_arr)
-    
-    #def calc_pi(self, ql, bhp):
-    #    assert self.test_ql > 0, 'Test Data Invalid: Liquid Rate of %0.2f is low' % self.test_ql
-    #    assert self.test_bhp > 0, 'Test Data Invalid: BHP of %0.2f is low' % self.test_bhp
-    #
-    #    pi = self.test_ql
 
-
-# oil pvt correlations: https://www.ihsenergy.ca/support/documentation_ca/Harmony_Enterprise/2019_3/content/html_files/ref_materials/calculations/oil_correlations.htm
-
-# can also use import numpy as np
-# from pvtcorrelation import *
-# or this https://github.com/yohanesnuwara/pyreservoir/blob/master/notebooks/pvt_correlation_notebook.ipynb 
-
-# gas pvt correlations: 
+if __name__ == "__main__":
+    pvt = bo.PVTModel()
+    pvt.set_params(650, 0.75, 40.0)
+    ipr = IPR()
+    ipr.set_params(5000, 160, pvt=pvt)
+    pi = ipr.calc_PI(4000, 2000 , 1000)
+    print(pi)    
